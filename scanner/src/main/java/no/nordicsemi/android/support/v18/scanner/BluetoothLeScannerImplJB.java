@@ -23,90 +23,198 @@
 package no.nordicsemi.android.support.v18.scanner;
 
 import android.Manifest;
+import android.app.PendingIntent;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.content.Context;
+import android.content.Intent;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.SystemClock;
-import android.support.annotation.RequiresPermission;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresPermission;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/* package */
+
 @SuppressWarnings("deprecation")
-class BluetoothLeScannerImplJB extends BluetoothLeScannerCompat implements BluetoothAdapter.LeScanCallback {
-	private final BluetoothAdapter mBluetoothAdapter;
-	private final Map<ScanCallback, ScanCallbackWrapper> mWrappers;
-	private long mPowerSaveRestInterval;
-	private long mPowerSaveScanInterval;
-	private Handler mPowerSaveHandler;
-	private Runnable mPowerSaveSleepRunnable = new Runnable() {
+/* package */ class BluetoothLeScannerImplJB extends BluetoothLeScannerCompat {
+
+	/**
+	 * A map that stores {@link ScanCallbackWrapper}s for user's {@link ScanCallback}.
+	 * Each wrapper keeps track of found and lost devices and allows to emulate batching.
+	 */
+	@NonNull private final Map<ScanCallback, ScanCallbackWrapper> wrappers = new HashMap<>();
+
+	@Nullable private HandlerThread handlerThread;
+	@Nullable private Handler powerSaveHandler;
+
+	private long powerSaveRestInterval;
+	private long powerSaveScanInterval;
+
+	private final Runnable powerSaveSleepTask = new Runnable() {
 		@SuppressWarnings("deprecation")
 		@Override
 		@RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH})
 		public void run() {
-			if (mBluetoothAdapter != null && mPowerSaveRestInterval > 0 && mPowerSaveScanInterval > 0) {
-				mBluetoothAdapter.stopLeScan(BluetoothLeScannerImplJB.this);
-
-				if (mPowerSaveHandler != null) {
-					mPowerSaveHandler.postDelayed(mPowerSaveScanRunnable, mPowerSaveRestInterval);
-				}
+			final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+			if (adapter != null && powerSaveRestInterval > 0 && powerSaveScanInterval > 0) {
+				adapter.stopLeScan(scanCallback);
+				powerSaveHandler.postDelayed(powerSaveScanTask, powerSaveRestInterval);
 			}
 		}
 	};
 
-	private Runnable mPowerSaveScanRunnable = new Runnable() {
+	private final Runnable powerSaveScanTask = new Runnable() {
 		@SuppressWarnings("deprecation")
 		@Override
 		@RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH})
 		public void run() {
-			if (mBluetoothAdapter != null && mPowerSaveRestInterval > 0 && mPowerSaveScanInterval > 0) {
-				mBluetoothAdapter.startLeScan(BluetoothLeScannerImplJB.this);
-
-				if (mPowerSaveHandler != null) {
-					mPowerSaveHandler.postDelayed(mPowerSaveSleepRunnable, mPowerSaveScanInterval);
-				}
+			final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+			if (adapter != null && powerSaveRestInterval > 0 && powerSaveScanInterval > 0) {
+				adapter.startLeScan(scanCallback);
+				powerSaveHandler.postDelayed(powerSaveSleepTask, powerSaveScanInterval);
 			}
 		}
 	};
 
-	/* package */ BluetoothLeScannerImplJB() {
-		mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-		mWrappers = new HashMap<>();
-	}
+	/* package */ BluetoothLeScannerImplJB() {}
 
 	@Override
 	@RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH})
 	@SuppressWarnings("deprecation")
-	/* package */ void startScanInternal(final List<ScanFilter> filters, final ScanSettings settings, final ScanCallback callback) {
-		BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
-
-		if (mWrappers.containsKey(callback)) {
-			throw new IllegalArgumentException("scanner already started with given callback");
-		}
+	/* package */ void startScanInternal(@NonNull final List<ScanFilter> filters,
+										 @NonNull final ScanSettings settings,
+										 @NonNull final ScanCallback callback,
+										 @NonNull final Handler handler) {
+		final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+		BluetoothLeUtils.checkAdapterStateOn(adapter);
 
 		boolean shouldStart;
-		synchronized (mWrappers) {
-			shouldStart = mWrappers.isEmpty();
 
-			final ScanCallbackWrapper wrapper = new ScanCallbackWrapper(filters, settings, callback);
-			mWrappers.put(callback, wrapper);
+		synchronized (wrappers) {
+			if (wrappers.containsKey(callback)) {
+				throw new IllegalArgumentException("scanner already started with given scanCallback");
+			}
+			final ScanCallbackWrapper wrapper = new ScanCallbackWrapper(
+					false, false,
+					filters, settings, callback, handler);
+			shouldStart = wrappers.isEmpty();
+			wrappers.put(callback, wrapper);
+		}
+
+		if (handlerThread == null) {
+			handlerThread = new HandlerThread(BluetoothLeScannerImplJB.class.getName());
+			handlerThread.start();
+			powerSaveHandler = new Handler(handlerThread.getLooper());
 		}
 
 		setPowerSaveSettings();
 
 		if (shouldStart) {
-			mBluetoothAdapter.startLeScan(this);
+			adapter.startLeScan(scanCallback);
 		}
 	}
 
+	@Override
+	@RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH})
+	/* package */ void stopScanInternal(@NonNull final ScanCallback callback) {
+		final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+		BluetoothLeUtils.checkAdapterStateOn(adapter);
+
+		boolean shouldStop;
+		ScanCallbackWrapper wrapper;
+		synchronized (wrappers) {
+			wrapper = wrappers.remove(callback);
+			shouldStop = wrappers.isEmpty();
+		}
+		if (wrapper == null)
+			return;
+
+		wrapper.close();
+
+		setPowerSaveSettings();
+
+		if (shouldStop) {
+			adapter.stopLeScan(scanCallback);
+
+			if (powerSaveHandler != null) {
+				powerSaveHandler.removeCallbacksAndMessages(null);
+			}
+
+			if (handlerThread != null) {
+				handlerThread.quitSafely();
+				handlerThread = null;
+			}
+		}
+	}
+
+	@Override
+	@RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH})
+	/* package */ void startScanInternal(@NonNull final List<ScanFilter> filters,
+										 @NonNull final ScanSettings settings,
+										 @NonNull final Context context,
+										 @NonNull final PendingIntent callbackIntent) {
+		final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+		BluetoothLeUtils.checkAdapterStateOn(adapter);
+
+		final Intent service = new Intent(context, ScannerService.class);
+		service.putParcelableArrayListExtra(ScannerService.EXTRA_FILTERS, new ArrayList<>(filters));
+		service.putExtra(ScannerService.EXTRA_SETTINGS, settings);
+		service.putExtra(ScannerService.EXTRA_PENDING_INTENT, callbackIntent);
+		service.putExtra(ScannerService.EXTRA_START, true);
+		context.startService(service);
+	}
+
+	@Override
+	@RequiresPermission(allOf = {Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH})
+	/* package */ void stopScanInternal(@NonNull final Context context,
+										@NonNull final PendingIntent callbackIntent) {
+		final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+		BluetoothLeUtils.checkAdapterStateOn(adapter);
+
+		final Intent service = new Intent(context, ScannerService.class);
+		service.putExtra(ScannerService.EXTRA_PENDING_INTENT, callbackIntent);
+		service.putExtra(ScannerService.EXTRA_START, false);
+		context.startService(service);
+	}
+
+	@Override
+	@RequiresPermission(Manifest.permission.BLUETOOTH)
+	public void flushPendingScanResults(@NonNull final ScanCallback callback) {
+		final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+		BluetoothLeUtils.checkAdapterStateOn(adapter);
+		//noinspection ConstantConditions
+		if (callback == null) {
+			throw new IllegalArgumentException("callback cannot be null!");
+		}
+
+		ScanCallbackWrapper wrapper;
+		synchronized (wrappers) {
+			wrapper = wrappers.get(callback);
+		}
+
+		if (wrapper == null) {
+			throw new IllegalArgumentException("callback not registered!");
+		}
+
+		wrapper.flushPendingScanResults();
+	}
+
+	/**
+	 * This method goes through registered callbacks and sets the power rest and scan intervals
+	 * to next lowest value.
+	 */
 	private void setPowerSaveSettings() {
 		long minRest = Long.MAX_VALUE, minScan = Long.MAX_VALUE;
-		synchronized (mWrappers) {
-			for (ScanCallbackWrapper wrapper : mWrappers.values()) {
-				final ScanSettings settings = wrapper.getScanSettings();
+		synchronized (wrappers) {
+			for (final ScanCallbackWrapper wrapper : wrappers.values()) {
+				final ScanSettings settings = wrapper.scanSettings;
 				if (settings.hasPowerSaveMode()) {
 					if (minRest > settings.getPowerSaveRest()) {
 						minRest = settings.getPowerSaveRest();
@@ -118,63 +226,39 @@ class BluetoothLeScannerImplJB extends BluetoothLeScannerCompat implements Bluet
 			}
 		}
 		if (minRest < Long.MAX_VALUE && minScan < Long.MAX_VALUE) {
-			mPowerSaveRestInterval = minRest;
-			mPowerSaveScanInterval = minScan;
-			if (mPowerSaveHandler == null) {
-				mPowerSaveHandler = new Handler();
-			} else {
-				mPowerSaveHandler.removeCallbacks(mPowerSaveScanRunnable);
-				mPowerSaveHandler.removeCallbacks(mPowerSaveSleepRunnable);
+			powerSaveRestInterval = minRest;
+			powerSaveScanInterval = minScan;
+			if (powerSaveHandler != null) {
+				powerSaveHandler.removeCallbacks(powerSaveScanTask);
+				powerSaveHandler.removeCallbacks(powerSaveSleepTask);
+				powerSaveHandler.postDelayed(powerSaveSleepTask, powerSaveScanInterval);
 			}
-			mPowerSaveHandler.postDelayed(mPowerSaveSleepRunnable, mPowerSaveScanInterval);
 		} else {
-			mPowerSaveRestInterval = mPowerSaveScanInterval = 0;
-			if (mPowerSaveHandler != null) {
-				mPowerSaveHandler.removeCallbacks(mPowerSaveScanRunnable);
-				mPowerSaveHandler.removeCallbacks(mPowerSaveSleepRunnable);
+			powerSaveRestInterval = powerSaveScanInterval = 0;
+			if (powerSaveHandler != null) {
+				powerSaveHandler.removeCallbacks(powerSaveScanTask);
+				powerSaveHandler.removeCallbacks(powerSaveSleepTask);
 			}
 		}
 	}
 
-	@Override
-	@RequiresPermission(Manifest.permission.BLUETOOTH_ADMIN)
-	@SuppressWarnings("deprecation")
-	public void stopScan(final ScanCallback callback) {
-		synchronized (mWrappers) {
-			final ScanCallbackWrapper wrapper = mWrappers.get(callback);
-			if (wrapper == null)
-				return;
+	private final BluetoothAdapter.LeScanCallback scanCallback = new BluetoothAdapter.LeScanCallback() {
+		@Override
+		public void onLeScan(final BluetoothDevice device, final int rssi, final byte[] scanRecord) {
+			final ScanResult scanResult = new ScanResult(device, ScanRecord.parseFromBytes(scanRecord),
+					rssi, SystemClock.elapsedRealtimeNanos());
 
-			mWrappers.remove(callback);
-			wrapper.close();
-		}
-
-		setPowerSaveSettings();
-
-		if (mWrappers.isEmpty()) {
-			mBluetoothAdapter.stopLeScan(this);
-		}
-	}
-
-	@Override
-	@RequiresPermission(Manifest.permission.BLUETOOTH)
-	public void flushPendingScanResults(final ScanCallback callback) {
-		BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
-		if (callback == null) {
-			throw new IllegalArgumentException("callback cannot be null!");
-		}
-		mWrappers.get(callback).flushPendingScanResults();
-	}
-
-	@Override
-	public void onLeScan(final BluetoothDevice device, final int rssi, final byte[] scanRecord) {
-		final ScanResult scanResult = new ScanResult(device, ScanRecord.parseFromBytes(scanRecord), rssi, SystemClock.elapsedRealtimeNanos());
-
-		synchronized (mWrappers) {
-			final Collection<ScanCallbackWrapper> wrappers = mWrappers.values();
-			for (final ScanCallbackWrapper wrapper : wrappers) {
-				wrapper.handleScanResult(scanResult);
+			synchronized (wrappers) {
+				final Collection<ScanCallbackWrapper> scanCallbackWrappers = wrappers.values();
+				for (final ScanCallbackWrapper wrapper : scanCallbackWrappers) {
+					wrapper.handler.post(new Runnable() {
+						@Override
+						public void run() {
+							wrapper.handleScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, scanResult);
+						}
+					});
+				}
 			}
 		}
-	}
+	};
 }

@@ -25,6 +25,9 @@ package no.nordicsemi.android.support.v18.scanner;
 import android.bluetooth.BluetoothDevice;
 import android.os.Parcel;
 import android.os.Parcelable;
+import androidx.annotation.NonNull;
+
+import java.util.List;
 
 /**
  * Bluetooth LE scan settings are passed to {@link BluetoothLeScannerCompat#startScan} to define the
@@ -47,18 +50,30 @@ public final class ScanSettings implements Parcelable {
 	/**
 	 * A special Bluetooth LE scan mode. Applications using this scan mode will passively listen for
 	 * other scan results without starting BLE scans themselves.
+	 * <p>
+	 * On Android Lollipop {@link #SCAN_MODE_LOW_POWER} will be used instead, as opportunistic
+	 * mode was not yet supported.
+	 * <p>
+	 * On pre-Lollipop devices it is possible to override the default intervals
+	 * using {@link Builder#setPowerSave(long, long)}.
 	 */
 	public static final int SCAN_MODE_OPPORTUNISTIC = -1;
 
 	/**
 	 * Perform Bluetooth LE scan in low power mode. This is the default scan mode as it consumes the
-	 * least power.
+	 * least power. This mode is enforced if the scanning application is not in foreground.
+	 * <p>
+	 * On pre-Lollipop devices this mode will be emulated by scanning for 0.5 second followed
+	 * by 4.5 second of idle, which corresponds to the low power intervals on Lollipop or newer.
 	 */
 	public static final int SCAN_MODE_LOW_POWER = 0;
 
 	/**
 	 * Perform Bluetooth LE scan in balanced power mode. Scan results are returned at a rate that
 	 * provides a good trade-off between scan frequency and power consumption.
+	 * <p>
+	 * On pre-Lollipop devices this mode will be emulated by scanning for 2 second followed
+	 * by 3 seconds of idle, which corresponds to the low power intervals on Lollipop or newer.
 	 */
 	public static final int SCAN_MODE_BALANCED = 1;
 
@@ -107,7 +122,6 @@ public final class ScanSettings implements Parcelable {
 	 */
 	public static final int MATCH_NUM_MAX_ADVERTISEMENT = 3;
 
-
 	/**
 	 * In Aggressive mode, hw will determine a match sooner even with feeble signal strength
 	 * and few number of sightings/match in a duration.
@@ -119,20 +133,6 @@ public final class ScanSettings implements Parcelable {
 	 * before reporting by hw
 	 */
 	public static final int MATCH_MODE_STICKY = 2;
-
-	/**
-	 * Request full scan results which contain the device, rssi, advertising data, scan response
-	 * as well as the scan timestamp.
-	 */
-	private static final int SCAN_RESULT_TYPE_FULL = 0;
-
-	/**
-	 * Request abbreviated scan results which contain the device, rssi and scan timestamp.
-	 * <p>
-	 * <b>Note:</b> It is possible for an application to get more scan results than it asked for, if
-	 * there are multiple apps using this type.
-	 */
-	private static final int SCAN_RESULT_TYPE_ABBREVIATED = 1;
 
 	/**
 	 * Use all supported PHYs for scanning.
@@ -147,70 +147,63 @@ public final class ScanSettings implements Parcelable {
 	 * To conserve power we can optionally scan for a certain duration (scan interval)
 	 * and then rest for a time before starting scanning again.
 	 */
-	private final long mPowerSaveScanInterval;
-	private final long mPowerSaveRestInterval;
+	private final long powerSaveScanInterval;
+	private final long powerSaveRestInterval;
 
 	// Bluetooth LE scan mode.
-	private int mScanMode;
+	private int scanMode;
 
 	// Bluetooth LE scan callback type
-	private int mCallbackType;
-
-	// Bluetooth LE scan result type
-	private int mScanResultType;
+	private int callbackType;
 
 	// Time of delay for reporting the scan result
-	private long mReportDelayMillis;
+	private long reportDelayMillis;
 
-	private int mMatchMode;
+	private int matchMode;
 
-	private int mNumOfMatchesPerFilter;
+	private int numOfMatchesPerFilter;
 
-	private boolean mUseHardwareFilteringIfSupported;
+	private boolean useHardwareFilteringIfSupported;
 
-	private boolean mUseHardwareBatchingIfSupported;
+	private boolean useHardwareBatchingIfSupported;
 
-	private boolean mUseHardwareCallbackTypesIfSupported;
+	private boolean useHardwareCallbackTypesIfSupported;
 
-	private long mMatchLostDeviceTimeout;
+	private long matchLostDeviceTimeout;
 
-	private long mMatchLostTaskInterval;
+	private long matchLostTaskInterval;
 
 	// Include only legacy advertising results
-	private boolean mLegacy;
+	private boolean legacy;
 
-	private int mPhy;
+	private int phy;
 
 	public int getScanMode() {
-		return mScanMode;
+		return scanMode;
 	}
 
 	public int getCallbackType() {
-		return mCallbackType;
-	}
-
-	public int getScanResultType() {
-		return mScanResultType;
+		return callbackType;
 	}
 
 	public int getMatchMode() {
-		return mMatchMode;
+		return matchMode;
 	}
 
 	public int getNumOfMatches() {
-		return mNumOfMatchesPerFilter;
+		return numOfMatchesPerFilter;
 	}
 
 	public boolean getUseHardwareFilteringIfSupported() {
-		return mUseHardwareFilteringIfSupported;
+		return useHardwareFilteringIfSupported;
 	}
 
 	public boolean getUseHardwareBatchingIfSupported() {
-		return mUseHardwareBatchingIfSupported;
+		return useHardwareBatchingIfSupported;
 	}
 
 	public boolean getUseHardwareCallbackTypesIfSupported() {
-		return mUseHardwareCallbackTypesIfSupported;
+		return useHardwareCallbackTypesIfSupported;
 	}
 
 	/**
@@ -220,15 +213,15 @@ public final class ScanSettings implements Parcelable {
 	 * mechanism.
 	 */
 	/* package */ void disableUseHardwareCallbackTypes() {
-		mUseHardwareCallbackTypesIfSupported = false;
+		useHardwareCallbackTypesIfSupported = false;
 	}
 
 	public long getMatchLostDeviceTimeout() {
-		return mMatchLostDeviceTimeout;
+		return matchLostDeviceTimeout;
 	}
 
 	public long getMatchLostTaskInterval() {
-		return mMatchLostTaskInterval;
+		return matchLostTaskInterval;
 	}
 
 	/**
@@ -237,75 +230,73 @@ public final class ScanSettings implements Parcelable {
 	 * by the Bluetooth core specification 4.2 and below.
 	 */
 	public boolean getLegacy() {
-		return mLegacy;
+		return legacy;
 	}
 
 	/**
 	 * Returns the physical layer used during a scan.
 	 */
 	public int getPhy() {
-		return mPhy;
+		return phy;
 	}
 
 	/**
 	 * Returns report delay timestamp based on the device clock.
 	 */
 	public long getReportDelayMillis() {
-		return mReportDelayMillis;
+		return reportDelayMillis;
 	}
 
-	private ScanSettings(int scanMode, int callbackType, int scanResultType,
-						 long reportDelayMillis, int matchMode,
-						 int numOfMatchesPerFilter, boolean legacy, int phy,
-						 boolean hardwareFiltering, boolean hardwareBatching,
-						 boolean hardwareCallbackTypes, long matchTimeout, long taskInterval,
-						 long powerSaveScanInterval, long powerSaveRestInterval) {
-		mScanMode = scanMode;
-		mCallbackType = callbackType;
-		mScanResultType = scanResultType;
-		mReportDelayMillis = reportDelayMillis;
-		mNumOfMatchesPerFilter = numOfMatchesPerFilter;
-		mMatchMode = matchMode;
-		mLegacy = legacy;
-		mPhy = phy;
-		mUseHardwareFilteringIfSupported = hardwareFiltering;
-		mUseHardwareBatchingIfSupported = hardwareBatching;
-		mUseHardwareCallbackTypesIfSupported = hardwareCallbackTypes;
-		mMatchLostDeviceTimeout = matchTimeout * 1000000L; // convert to nanos
-		mMatchLostTaskInterval = taskInterval;
-		mPowerSaveScanInterval = powerSaveScanInterval;
-		mPowerSaveRestInterval = powerSaveRestInterval;
+	private ScanSettings(final int scanMode, final int callbackType,
+						 final long reportDelayMillis, final int matchMode,
+						 final int numOfMatchesPerFilter, final boolean legacy, final int phy,
+						 final boolean hardwareFiltering, final boolean hardwareBatching,
+						 final boolean hardwareCallbackTypes, final long matchTimeout,
+						 final long taskInterval,
+						 final long powerSaveScanInterval, final long powerSaveRestInterval) {
+		this.scanMode = scanMode;
+		this.callbackType = callbackType;
+		this.reportDelayMillis = reportDelayMillis;
+		this.numOfMatchesPerFilter = numOfMatchesPerFilter;
+		this.matchMode = matchMode;
+		this.legacy = legacy;
+		this.phy = phy;
+		this.useHardwareFilteringIfSupported = hardwareFiltering;
+		this.useHardwareBatchingIfSupported = hardwareBatching;
+		this.useHardwareCallbackTypesIfSupported = hardwareCallbackTypes;
+		this.matchLostDeviceTimeout = matchTimeout * 1000000L; // convert to nanos
+		this.matchLostTaskInterval = taskInterval;
+		this.powerSaveScanInterval = powerSaveScanInterval;
+		this.powerSaveRestInterval = powerSaveRestInterval;
 	}
 
-	private ScanSettings(Parcel in) {
-		mScanMode = in.readInt();
-		mCallbackType = in.readInt();
-		mScanResultType = in.readInt();
-		mReportDelayMillis = in.readLong();
-		mMatchMode = in.readInt();
-		mNumOfMatchesPerFilter = in.readInt();
-		mLegacy = in.readInt() != 0;
-		mPhy = in.readInt();
-		mUseHardwareFilteringIfSupported = in.readInt() == 1;
-		mUseHardwareBatchingIfSupported = in.readInt() == 1;
-		mPowerSaveScanInterval = in.readLong();
-		mPowerSaveRestInterval = in.readLong();
+	private ScanSettings(final Parcel in) {
+		scanMode = in.readInt();
+		callbackType = in.readInt();
+		reportDelayMillis = in.readLong();
+		matchMode = in.readInt();
+		numOfMatchesPerFilter = in.readInt();
+		legacy = in.readInt() != 0;
+		phy = in.readInt();
+		useHardwareFilteringIfSupported = in.readInt() == 1;
+		useHardwareBatchingIfSupported = in.readInt() == 1;
+		powerSaveScanInterval = in.readLong();
+		powerSaveRestInterval = in.readLong();
 	}
 
 	@Override
-	public void writeToParcel(Parcel dest, int flags) {
-		dest.writeInt(mScanMode);
-		dest.writeInt(mCallbackType);
-		dest.writeInt(mScanResultType);
-		dest.writeLong(mReportDelayMillis);
-		dest.writeInt(mMatchMode);
-		dest.writeInt(mNumOfMatchesPerFilter);
-		dest.writeInt(mLegacy ? 1 : 0);
-		dest.writeInt(mPhy);
-		dest.writeInt(mUseHardwareFilteringIfSupported ? 1 : 0);
-		dest.writeInt(mUseHardwareBatchingIfSupported ? 1 : 0);
-		dest.writeLong(mPowerSaveScanInterval);
-		dest.writeLong(mPowerSaveRestInterval);
+	public void writeToParcel(final Parcel dest, final int flags) {
+		dest.writeInt(scanMode);
+		dest.writeInt(callbackType);
+		dest.writeLong(reportDelayMillis);
+		dest.writeInt(matchMode);
+		dest.writeInt(numOfMatchesPerFilter);
+		dest.writeInt(legacy ? 1 : 0);
+		dest.writeInt(phy);
+		dest.writeInt(useHardwareFilteringIfSupported ? 1 : 0);
+		dest.writeInt(useHardwareBatchingIfSupported ? 1 : 0);
+		dest.writeLong(powerSaveScanInterval);
+		dest.writeLong(powerSaveRestInterval);
 	}
 
 	@Override
@@ -313,32 +304,31 @@ public final class ScanSettings implements Parcelable {
 		return 0;
 	}
 
-	public static final Parcelable.Creator<ScanSettings>
-			CREATOR = new Creator<ScanSettings>() {
+	public static final Parcelable.Creator<ScanSettings> CREATOR = new Creator<ScanSettings>() {
 		@Override
-		public ScanSettings[] newArray(int size) {
+		public ScanSettings[] newArray(final int size) {
 			return new ScanSettings[size];
 		}
 
 		@Override
-		public ScanSettings createFromParcel(Parcel in) {
+		public ScanSettings createFromParcel(final Parcel in) {
 			return new ScanSettings(in);
 		}
 	};
 
 	/**
 	 * Determine if we should do power-saving sleep on pre-Lollipop
-     */
+	 */
 	public boolean hasPowerSaveMode() {
-		return mPowerSaveRestInterval > 0 && mPowerSaveScanInterval > 0;
+		return powerSaveRestInterval > 0 && powerSaveScanInterval > 0;
 	}
 
 	public long getPowerSaveRest() {
-		return mPowerSaveRestInterval;
+		return powerSaveRestInterval;
 	}
 
 	public long getPowerSaveScan() {
-		return mPowerSaveScanInterval;
+		return powerSaveScanInterval;
 	}
 
 	/**
@@ -346,35 +336,44 @@ public final class ScanSettings implements Parcelable {
 	 */
 	@SuppressWarnings({"UnusedReturnValue", "unused"})
 	public static final class Builder {
-		private int mScanMode = SCAN_MODE_LOW_POWER;
-		private int mCallbackType = CALLBACK_TYPE_ALL_MATCHES;
-		private int mScanResultType = SCAN_RESULT_TYPE_FULL;
-		private long mReportDelayMillis = 0;
-		private int mMatchMode = MATCH_MODE_AGGRESSIVE;
-		private int mNumOfMatchesPerFilter  = MATCH_NUM_MAX_ADVERTISEMENT;
-		private boolean mLegacy = true;
-		private int mPhy = PHY_LE_ALL_SUPPORTED;
-		private boolean mUseHardwareFilteringIfSupported = true;
-		private boolean mUseHardwareBatchingIfSupported = true;
-		private boolean mUseHardwareCallbackTypesIfSupported = true;
-		private long mMatchLostDeviceTimeout = MATCH_LOST_DEVICE_TIMEOUT_DEFAULT;
-		private long mMatchLostTaskInterval = MATCH_LOST_TASK_INTERVAL_DEFAULT;
-		private long mPowerSaveRestInterval = 0;
-		private long mPowerSaveScanInterval = 0;
+		private int scanMode = SCAN_MODE_LOW_POWER;
+		private int callbackType = CALLBACK_TYPE_ALL_MATCHES;
+		private long reportDelayMillis = 0;
+		private int matchMode = MATCH_MODE_AGGRESSIVE;
+		private int numOfMatchesPerFilter = MATCH_NUM_MAX_ADVERTISEMENT;
+		private boolean legacy = true;
+		private int phy = PHY_LE_ALL_SUPPORTED;
+		private boolean useHardwareFilteringIfSupported = true;
+		private boolean useHardwareBatchingIfSupported = true;
+		private boolean useHardwareCallbackTypesIfSupported = true;
+		private long matchLostDeviceTimeout = MATCH_LOST_DEVICE_TIMEOUT_DEFAULT;
+		private long matchLostTaskInterval = MATCH_LOST_TASK_INTERVAL_DEFAULT;
+		private long powerSaveRestInterval = 0;
+		private long powerSaveScanInterval = 0;
 
 		/**
 		 * Set scan mode for Bluetooth LE scan.
+		 * <p>
+		 * {@link #SCAN_MODE_OPPORTUNISTIC} is supported on Android Marshmallow onwards.
+		 * On Lollipop this mode will fall back {@link #SCAN_MODE_LOW_POWER}, which actually means
+		 * that the library will start its own scan instead of relying on scans from other apps.
+		 * This may have significant impact on battery usage.
+		 * <p>
+		 * On pre-Lollipop devices, the settings set by {@link #setPowerSave(long, long)}
+		 * will be used. By default, the intervals are the same as for {@link #SCAN_MODE_LOW_POWER}.
 		 *
 		 * @param scanMode The scan mode can be one of {@link ScanSettings#SCAN_MODE_LOW_POWER},
-		 *            {@link ScanSettings#SCAN_MODE_BALANCED} or
-		 *            {@link ScanSettings#SCAN_MODE_LOW_LATENCY}.
+		 *                 {@link #SCAN_MODE_BALANCED},
+		 *                 {@link #SCAN_MODE_LOW_LATENCY} or
+		 *                 {@link #SCAN_MODE_OPPORTUNISTIC}.
 		 * @throws IllegalArgumentException If the {@code scanMode} is invalid.
 		 */
-		public Builder setScanMode(int scanMode) {
+		@NonNull
+		public Builder setScanMode(final int scanMode) {
 			if (scanMode < SCAN_MODE_OPPORTUNISTIC || scanMode > SCAN_MODE_LOW_LATENCY) {
 				throw new IllegalArgumentException("invalid scan mode " + scanMode);
 			}
-			mScanMode = scanMode;
+			this.scanMode = scanMode;
 			return this;
 		}
 
@@ -384,16 +383,17 @@ public final class ScanSettings implements Parcelable {
 		 * @param callbackType The callback type flags for the scan.
 		 * @throws IllegalArgumentException If the {@code callbackType} is invalid.
 		 */
-		public Builder setCallbackType(int callbackType) {
+		@NonNull
+		public Builder setCallbackType(final int callbackType) {
 			if (!isValidCallbackType(callbackType)) {
 				throw new IllegalArgumentException("invalid callback type - " + callbackType);
 			}
-			mCallbackType = callbackType;
+			this.callbackType = callbackType;
 			return this;
 		}
 
 		// Returns true if the callbackType is valid.
-		private boolean isValidCallbackType(int callbackType) {
+		private boolean isValidCallbackType(final int callbackType) {
 			if (callbackType == CALLBACK_TYPE_ALL_MATCHES ||
 					callbackType == CALLBACK_TYPE_FIRST_MATCH ||
 					callbackType == CALLBACK_TYPE_MATCH_LOST) {
@@ -403,54 +403,43 @@ public final class ScanSettings implements Parcelable {
 		}
 
 		/**
-		 * Set scan result type for Bluetooth LE scan.
-		 *
-		 * @param scanResultType Type for scan result, could be either
-		 *            {@link ScanSettings#SCAN_RESULT_TYPE_FULL} or
-		 *            {@link ScanSettings#SCAN_RESULT_TYPE_ABBREVIATED}.
-		 * @throws IllegalArgumentException If the {@code scanResultType} is invalid.
-		 */
-		public Builder setScanResultType(int scanResultType) {
-			if (scanResultType < SCAN_RESULT_TYPE_FULL
-					|| scanResultType > SCAN_RESULT_TYPE_ABBREVIATED) {
-				throw new IllegalArgumentException(
-						"invalid scanResultType - " + scanResultType);
-			}
-			mScanResultType = scanResultType;
-			return this;
-		}
-
-		/**
 		 * Set report delay timestamp for Bluetooth LE scan.
 		 *
 		 * @param reportDelayMillis Delay of report in milliseconds. Set to 0 to be notified of
-		 *            results immediately. Values &gt; 0 causes the scan results to be queued up and
-		 *            delivered after the requested delay or when the internal buffers fill up.
+		 *                          results immediately. Values &gt; 0 causes the scan results
+		 *                          to be queued up and delivered after the requested delay or
+		 *                          when the internal buffers fill up.<p>
+		 *                          For delays below 5000 ms (5 sec) the
+		 *                          {@link ScanCallback#onBatchScanResults(List)}
+		 *                          will be called in unreliable intervals, but starting from
+		 *                          around 5000 the intervals get even.
 		 * @throws IllegalArgumentException If {@code reportDelayMillis} &lt; 0.
 		 */
-		public Builder setReportDelay(long reportDelayMillis) {
+		@NonNull
+		public Builder setReportDelay(final long reportDelayMillis) {
 			if (reportDelayMillis < 0) {
 				throw new IllegalArgumentException("reportDelay must be > 0");
 			}
-			mReportDelayMillis = reportDelayMillis;
+			this.reportDelayMillis = reportDelayMillis;
 			return this;
 		}
 
 		/**
-		 * Set the number of matches for Bluetooth LE scan filters hardware match
+		 * Set the number of matches for Bluetooth LE scan filters hardware match.
 		 *
 		 * @param numOfMatches The num of matches can be one of
-		 *              {@link ScanSettings#MATCH_NUM_ONE_ADVERTISEMENT} or
-		 *              {@link ScanSettings#MATCH_NUM_FEW_ADVERTISEMENT} or
-		 *              {@link ScanSettings#MATCH_NUM_MAX_ADVERTISEMENT}
+		 *                     {@link ScanSettings#MATCH_NUM_ONE_ADVERTISEMENT} or
+		 *                     {@link ScanSettings#MATCH_NUM_FEW_ADVERTISEMENT} or
+		 *                     {@link ScanSettings#MATCH_NUM_MAX_ADVERTISEMENT}
 		 * @throws IllegalArgumentException If the {@code matchMode} is invalid.
 		 */
-		public Builder setNumOfMatches(int numOfMatches) {
+		@NonNull
+		public Builder setNumOfMatches(final int numOfMatches) {
 			if (numOfMatches < MATCH_NUM_ONE_ADVERTISEMENT
 					|| numOfMatches > MATCH_NUM_MAX_ADVERTISEMENT) {
 				throw new IllegalArgumentException("invalid numOfMatches " + numOfMatches);
 			}
-			mNumOfMatchesPerFilter = numOfMatches;
+			numOfMatchesPerFilter = numOfMatches;
 			return this;
 		}
 
@@ -458,16 +447,17 @@ public final class ScanSettings implements Parcelable {
 		 * Set match mode for Bluetooth LE scan filters hardware match
 		 *
 		 * @param matchMode The match mode can be one of
-		 *              {@link ScanSettings#MATCH_MODE_AGGRESSIVE} or
-		 *              {@link ScanSettings#MATCH_MODE_STICKY}
+		 *                  {@link ScanSettings#MATCH_MODE_AGGRESSIVE} or
+		 *                  {@link ScanSettings#MATCH_MODE_STICKY}
 		 * @throws IllegalArgumentException If the {@code matchMode} is invalid.
 		 */
-		public Builder setMatchMode(int matchMode) {
+		@NonNull
+		public Builder setMatchMode(final int matchMode) {
 			if (matchMode < MATCH_MODE_AGGRESSIVE
 					|| matchMode > MATCH_MODE_STICKY) {
 				throw new IllegalArgumentException("invalid matchMode " + matchMode);
 			}
-			mMatchMode = matchMode;
+			this.matchMode = matchMode;
 			return this;
 		}
 
@@ -479,8 +469,9 @@ public final class ScanSettings implements Parcelable {
 		 *
 		 * @param legacy true if only legacy advertisements will be returned
 		 */
-		public Builder setLegacy(boolean legacy) {
-			mLegacy = legacy;
+		@NonNull
+		public Builder setLegacy(final boolean legacy) {
+			this.legacy = legacy;
 			return this;
 		}
 
@@ -494,12 +485,13 @@ public final class ScanSettings implements Parcelable {
 		 * Selecting an unsupported phy will result in failure to start scan.
 		 *
 		 * @param phy Can be one of
-		 *   {@link BluetoothDevice#PHY_LE_1M},
-		 *   {@link BluetoothDevice#PHY_LE_CODED} or
-		 *   {@link ScanSettings#PHY_LE_ALL_SUPPORTED}
+		 *            {@link BluetoothDevice#PHY_LE_1M},
+		 *            {@link BluetoothDevice#PHY_LE_CODED} or
+		 *            {@link ScanSettings#PHY_LE_ALL_SUPPORTED}
 		 */
-		public Builder setPhy(int phy) {
-			mPhy = phy;
+		@NonNull
+		public Builder setPhy(final int phy) {
+			this.phy = phy;
 			return this;
 		}
 
@@ -511,11 +503,12 @@ public final class ScanSettings implements Parcelable {
 		 * See https://code.google.com/p/android/issues/detail?id=181561.
 		 *
 		 * @param use true to enable (default) hardware offload filtering.
-		 *                 If false a compat software filtering will be used
-		 *                 (uses much more resources).
+		 *            If false a compat software filtering will be used
+		 *            (uses much more resources).
 		 */
-		public Builder setUseHardwareFilteringIfSupported(boolean use) {
-			mUseHardwareFilteringIfSupported = use;
+		@NonNull
+		public Builder setUseHardwareFilteringIfSupported(final boolean use) {
+			useHardwareFilteringIfSupported = use;
 			return this;
 		}
 
@@ -529,10 +522,11 @@ public final class ScanSettings implements Parcelable {
 		 * hardware triggered callback will be called every 1500ms +-200ms.
 		 *
 		 * @param use true to enable (default) hardware offloaded batching if they are supported.
-		 *                 False to always use compat mechanism.
+		 *            False to always use compat mechanism.
 		 */
-		public Builder setUseHardwareBatchingIfSupported(boolean use) {
-			mUseHardwareBatchingIfSupported = use;
+		@NonNull
+		public Builder setUseHardwareBatchingIfSupported(final boolean use) {
+			useHardwareBatchingIfSupported = use;
 			return this;
 		}
 
@@ -540,17 +534,18 @@ public final class ScanSettings implements Parcelable {
 		 * This method may be used when callback type is set to a value different than
 		 * {@link #CALLBACK_TYPE_ALL_MATCHES}. When disabled, the Scanner Compat itself will
 		 * take care of reporting first match and match lost. The compat behaviour may differ
-		 * from the one natively supported on Android Marshmallow.
-		 *
+		 * from the one natively supported on Android Marshmallow or newer.
+		 * <p>
 		 * Also, in compat mode values set by {@link #setMatchMode(int)} and
 		 * {@link #setNumOfMatches(int)} are ignored.
 		 * Instead use {@link #setMatchOptions(long, long)} to set timer options.
 		 *
 		 * @param use true to enable (default) the offloaded match reporting if hardware supports it,
-		 *                 false to enable compat implementation.
+		 *            false to enable compat implementation.
 		 */
-		public Builder setUseHardwareCallbackTypesIfSupported(boolean use) {
-			mUseHardwareCallbackTypesIfSupported = use;
+		@NonNull
+		public Builder setUseHardwareCallbackTypesIfSupported(final boolean use) {
+			useHardwareCallbackTypesIfSupported = use;
 			return this;
 		}
 
@@ -564,14 +559,15 @@ public final class ScanSettings implements Parcelable {
 		 *
 		 * @param deviceTimeoutMillis the time required for the device to be recognized as lost
 		 *                            (default {@link #MATCH_LOST_DEVICE_TIMEOUT_DEFAULT}).
-		 * @param taskIntervalMillis the task interval (default {@link #MATCH_LOST_TASK_INTERVAL_DEFAULT}).
+		 * @param taskIntervalMillis  the task interval (default {@link #MATCH_LOST_TASK_INTERVAL_DEFAULT}).
 		 */
+		@NonNull
 		public Builder setMatchOptions(final long deviceTimeoutMillis, final long taskIntervalMillis) {
 			if (deviceTimeoutMillis <= 0 || taskIntervalMillis <= 0) {
 				throw new IllegalArgumentException("maxDeviceAgeMillis and taskIntervalMillis must be > 0");
 			}
-			mMatchLostDeviceTimeout = deviceTimeoutMillis;
-			mMatchLostTaskInterval = taskIntervalMillis;
+			matchLostDeviceTimeout = deviceTimeoutMillis;
+			matchLostTaskInterval = taskIntervalMillis;
 			return this;
 		}
 
@@ -583,27 +579,63 @@ public final class ScanSettings implements Parcelable {
 		 *
 		 * @param scanInterval interval in ms to scan at a time.
 		 * @param restInterval interval to sleep for without scanning before scanning again for
-		 *                              scanInterval.
+		 *                     scanInterval.
 		 */
+		@NonNull
 		public Builder setPowerSave(final long scanInterval, final long restInterval) {
 			if (scanInterval <= 0 || restInterval <= 0) {
 				throw new IllegalArgumentException("scanInterval and restInterval must be > 0");
 			}
-			mPowerSaveScanInterval = scanInterval;
-			mPowerSaveRestInterval = restInterval;
+			powerSaveScanInterval = scanInterval;
+			powerSaveRestInterval = restInterval;
 			return this;
 		}
 
 		/**
 		 * Build {@link ScanSettings}.
 		 */
+		@NonNull
 		public ScanSettings build() {
-			return new ScanSettings(mScanMode, mCallbackType, mScanResultType,
-					mReportDelayMillis, mMatchMode,
-					mNumOfMatchesPerFilter, mLegacy, mPhy, mUseHardwareFilteringIfSupported,
-					mUseHardwareBatchingIfSupported, mUseHardwareCallbackTypesIfSupported,
-					mMatchLostDeviceTimeout, mMatchLostTaskInterval,
-					mPowerSaveScanInterval, mPowerSaveRestInterval);
+			if (powerSaveRestInterval == 0 && powerSaveScanInterval == 0)
+				updatePowerSaveSettings();
+
+			return new ScanSettings(scanMode, callbackType, reportDelayMillis, matchMode,
+					numOfMatchesPerFilter, legacy, phy, useHardwareFilteringIfSupported,
+					useHardwareBatchingIfSupported, useHardwareCallbackTypesIfSupported,
+					matchLostDeviceTimeout, matchLostTaskInterval,
+					powerSaveScanInterval, powerSaveRestInterval);
+		}
+
+		/**
+		 * Sets power save settings based on the scan mode selected.
+		 */
+		private void updatePowerSaveSettings() {
+			switch (scanMode) {
+				case SCAN_MODE_LOW_LATENCY:
+					// Disable power save mode
+					powerSaveScanInterval = 0;
+					powerSaveRestInterval = 0;
+					break;
+				case SCAN_MODE_BALANCED:
+					// Scan for 2 seconds every 5 seconds
+					powerSaveScanInterval = 2000;
+					powerSaveRestInterval = 3000;
+					break;
+				case SCAN_MODE_OPPORTUNISTIC:
+					// It is not possible to emulate OPPORTUNISTIC scanning, but in theory
+					// that should be even less battery consuming than LOW_POWER.
+					// For pre-Lollipop devices intervals can be overwritten by
+					// setPowerSave(long, long) if needed.
+
+					// On Android Lollipop the native SCAN_MODE_LOW_POWER will be used instead
+					// of power save values.
+				case SCAN_MODE_LOW_POWER:
+				default:
+					// Scan for 0.5 second every 5 seconds
+					powerSaveScanInterval = 500;
+					powerSaveRestInterval = 4500;
+					break;
+			}
 		}
 	}
 }
